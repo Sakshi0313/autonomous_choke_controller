@@ -136,7 +136,7 @@ class ScipyMPC:
                 method="SLSQP",
                 bounds=bounds,
                 constraints=cons,
-                options={"maxiter": 150, "ftol": 1e-6, "disp": False},
+                options={"maxiter": 50, "ftol": 1e-4, "disp": False},
             )
             u_first = float(np.clip(res.x[0], 0.0, 100.0))
             return u_first, res.success, res.nit, res.message, res.x
