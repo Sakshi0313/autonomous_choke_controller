@@ -37,7 +37,7 @@ Engineering*, Ch. 5). This is included as a deliverable in
 
 ## 3. Architecture
 
-![System Architecture](results/architecture_diagram.png)
+![System Architecture](https://github.com/user-attachments/assets/your-generated-url)
 
 ## 4. Physics Basis
 
