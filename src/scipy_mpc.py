@@ -30,6 +30,10 @@ class ScipyMPC:
         self.current_choke  = 0.0
         self.prev_solution  = None
 
+        # cache feasibility result — computed once, reused every step
+        self.max_feasible_Q      = None
+        self.limiting_constraint = None
+
         self.stats = {
             "scipy_calls":   0,
             "scipy_success": 0,
@@ -143,14 +147,22 @@ class ScipyMPC:
         except Exception as e:
             return prev_choke, False, 0, str(e), None
 
-    def _get_status(self, pred_Q, target_Q, solver_ok):
+    def get_feasible_target(self, target_Q):
+        # compute once and cache — model doesn't change between calls
+        if self.max_feasible_Q is None:
+            self.max_feasible_Q, _, self.limiting_constraint = \
+                self.cm.compute_max_safe_production(self.model)
+
+        if target_Q > self.max_feasible_Q:
+            return self.max_feasible_Q, True, self.limiting_constraint
+        return target_Q, False, None
+
+    def _get_status(self, pred_Q, target_Q, solver_ok, clamped, limit_str):
+        if clamped:
+            return "CONSTRAINED_MAX", limit_str
+
         if not solver_ok:
             return "FALLBACK_ACTIVE", None
-
-        max_Q, _, limit_str = self.cm.compute_max_safe_production(self.model)
-
-        if target_Q > max_Q * 1.02:
-            return "CONSTRAINED_MAX", limit_str
 
         rel_err = abs(pred_Q - target_Q) / max(abs(target_Q), 1e-6)
         if rel_err < 0.03:
@@ -168,7 +180,10 @@ class ScipyMPC:
         prev_choke = self.current_choke
         self.stats["scipy_calls"] += 1
 
-        u_first, success, n_iters, msg, sol_array = self._solve(state, target_Q, prev_choke)
+        # clamp to feasible range before doing anything else
+        working_target, clamped, limit_str = self.get_feasible_target(target_Q)
+
+        u_first, success, n_iters, msg, sol_array = self._solve(state, working_target, prev_choke)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         self.stats["solve_times_ms"].append(elapsed_ms)
         self.stats["total_iters"] += n_iters
@@ -179,7 +194,7 @@ class ScipyMPC:
         fallback_reason = ""
 
         if success:
-            seq  = self._build_sequence(u_first, prev_choke, target_Q)
+            seq  = self._build_sequence(u_first, prev_choke, working_target)
             traj = self.model.predict_trajectory(state, seq, self.horizon)
             traj_safe, viol = self.cm.is_trajectory_safe(traj)
 
@@ -201,7 +216,7 @@ class ScipyMPC:
             self.stats["fallback_used"] += 1
             self.prev_solution = None
             self.fallback.current_choke = prev_choke
-            fb_result  = self.fallback.compute(state, target_Q)
+            fb_result  = self.fallback.compute(state, working_target)
             choke_cmd  = fb_result["choke_command"]
             method     = f"BRUTE_FORCE ({fallback_reason[:40]})" if fallback_reason else "BRUTE_FORCE"
 
@@ -214,17 +229,20 @@ class ScipyMPC:
         one_step = self.model.predict_trajectory(state, [choke_cmd], 1)
         pred_Q   = float(one_step["Q"][0])
 
-        status, active_limit = self._get_status(pred_Q, target_Q, solver_ok)
+        status, active_limit = self._get_status(pred_Q, working_target, solver_ok, clamped, limit_str)
 
         return {
-            "choke_command":  round(choke_cmd, 2),
-            "status":         status,
-            "method":         method,
-            "predicted_Q":    round(pred_Q, 2),
-            "solver_iters":   n_iters,
-            "solve_time_ms":  round(elapsed_ms, 1),
-            "active_limit":   active_limit,
-            "choke_delta":    round(choke_cmd - prev_choke, 2),
+            "choke_command":    round(choke_cmd, 2),
+            "status":           status,
+            "method":           method,
+            "predicted_Q":      round(pred_Q, 2),
+            "solver_iters":     n_iters,
+            "solve_time_ms":    round(elapsed_ms, 1),
+            "active_limit":     active_limit,
+            "choke_delta":      round(choke_cmd - prev_choke, 2),
+            "requested_target": target_Q,
+            "working_target":   round(working_target, 2),
+            "is_clamped":       clamped,
         }
 
     def report(self):
