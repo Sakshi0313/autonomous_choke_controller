@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import numpy as np
 import pandas as pd
 
@@ -36,7 +37,11 @@ class BruteForceMPC:
             score -= w * (q_pred - target_Q) ** 2
         return score
 
+    def reset(self, choke=0.0):
+        self.current_choke = choke
+
     def compute(self, state, target_Q):
+        t0 = time.time()
         current_choke = float(state.get("choke", self.current_choke))
         candidates    = self.cm.get_choke_candidates(current_choke)
         target_choke  = self.model.invert_for_choke(target_Q)
@@ -66,13 +71,15 @@ class BruteForceMPC:
             choke_cmd = float(np.clip(current_choke - 5.0, 0.0, 100.0))
             self.current_choke = choke_cmd
             return {
-                "choke_command":      round(choke_cmd, 2),
-                "status":             "EMERGENCY_CLOSE",
-                "method":             "BRUTE_FORCE",
-                "predicted_Q":        None,
+                "choke_command":        round(choke_cmd, 2),
+                "status":               "EMERGENCY_CLOSE",
+                "method":               "BRUTE_FORCE",
+                "predicted_Q":          None,
                 "candidates_evaluated": n_evaluated,
-                "candidates_safe":    n_safe,
-                "active_limit":       None,
+                "candidates_safe":      n_safe,
+                "active_limit":         None,
+                "solve_time_ms":        round((time.time() - t0) * 1000, 1),
+                "solver_iters":         n_evaluated,
             }
 
         # final ramp-rate enforcement
@@ -85,13 +92,15 @@ class BruteForceMPC:
         pred_Q   = round(float(one_step["Q"][0]), 3)
 
         return {
-            "choke_command":      round(choke_cmd, 2),
-            "status":             "OK",
-            "method":             "BRUTE_FORCE",
-            "predicted_Q":        pred_Q,
+            "choke_command":        round(choke_cmd, 2),
+            "status":               "OK",
+            "method":               "BRUTE_FORCE",
+            "predicted_Q":          pred_Q,
             "candidates_evaluated": n_evaluated,
-            "candidates_safe":    n_safe,
-            "active_limit":       None,
+            "candidates_safe":      n_safe,
+            "active_limit":         None,
+            "solve_time_ms":        round((time.time() - t0) * 1000, 1),
+            "solver_iters":         n_evaluated,
         }
 
 
